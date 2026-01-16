@@ -1,0 +1,156 @@
+# Phosphor Demo - Docker Compose Configuration
+# 
+# This docker-compose file demonstrates two patterns:
+# 1. Direct Load: telemetrygen sends data directly to Phosphor
+# 2. Mirror Pattern: OTel Collector fans out to both a mock backend and Phosphor
+#
+# Usage:
+#   docker-compose up -d          # Start all services
+#   docker-compose up direct-load # Run direct load test only
+#   docker-compose logs -f        # Follow logs
+
+services:
+  # ============================================================================
+  # Pattern 1: Direct Load Testing
+  # ============================================================================
+  
+  # Generates trace, metric, and log data directly to Phosphor
+  direct-load-traces:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+    profiles: ["direct-load", "all"]
+    command:
+      - traces
+      - --otlp-endpoint=host.docker.internal:4317
+      - --otlp-insecure
+      - --rate=50
+      - --duration=60s
+      - --service=demo-trace-service
+      - --span-duration=100ms
+      - --spans-per-trace=5
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on: []
+
+  direct-load-metrics:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+    profiles: ["direct-load", "all"]
+    command:
+      - metrics
+      - --otlp-endpoint=host.docker.internal:4317
+      - --otlp-insecure
+      - --rate=20
+      - --duration=60s
+      - --service=demo-metrics-service
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on: []
+
+  direct-load-logs:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+    profiles: ["direct-load", "all"]
+    command:
+      - logs
+      - --otlp-endpoint=host.docker.internal:4317
+      - --otlp-insecure
+      - --rate=30
+      - --duration=60s
+      - --service=demo-logs-service
+      - --body="Application log message with sample data"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on: []
+
+  # ============================================================================
+  # Pattern 2: Mirror Pattern (Fan-Out)
+  # ============================================================================
+  
+  # Mock backend that simply receives and discards telemetry
+  mock-backend:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/opentelemetry-collector-contrib:latest
+    profiles: ["mirror", "all"]
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./mock-backend-config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "14317:4317"  # Expose on different port to avoid conflict
+
+  # OpenTelemetry Collector configured for fan-out
+  otel-collector:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/opentelemetry-collector-contrib:latest
+    profiles: ["mirror", "all"]
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4318:4318"   # HTTP receiver
+      - "4319:4317"   # gRPC receiver (on different host port)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - mock-backend
+
+  # Load generator sending to the collector (which fans out)
+  mirror-load-traces:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+    profiles: ["mirror", "all"]
+    command:
+      - traces
+      - --otlp-endpoint=otel-collector:4317
+      - --otlp-insecure
+      - --rate=25
+      - --duration=120s
+      - --service=production-api
+      - --span-duration=200ms
+      - --spans-per-trace=8
+    depends_on:
+      - otel-collector
+
+  mirror-load-metrics:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+    profiles: ["mirror", "all"]
+    command:
+      - metrics
+      - --otlp-endpoint=otel-collector:4317
+      - --otlp-insecure
+      - --rate=15
+      - --duration=120s
+      - --service=production-api
+    depends_on:
+      - otel-collector
+
+  mirror-load-logs:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+    profiles: ["mirror", "all"]
+    command:
+      - logs
+      - --otlp-endpoint=otel-collector:4317
+      - --otlp-insecure
+      - --rate=20
+      - --duration=120s
+      - --service=production-api
+      - --body="Production log: Processing request"
+    depends_on:
+      - otel-collector
+
+  # ============================================================================
+  # Stress Test (Higher Volume)
+  # ============================================================================
+  
+  stress-test:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+    profiles: ["stress"]
+    command:
+      - traces
+      - --otlp-endpoint=host.docker.internal:4317
+      - --otlp-insecure
+      - --rate=500
+      - --duration=30s
+      - --service=stress-test-service
+      - --span-duration=50ms
+      - --spans-per-trace=3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  default:
+    name: phosphor-demo

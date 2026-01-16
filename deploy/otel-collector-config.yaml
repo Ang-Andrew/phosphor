@@ -1,0 +1,64 @@
+# OpenTelemetry Collector Configuration for Phosphor Demo
+# This configuration demonstrates the "fan-out" pattern where telemetry
+# is sent to both a mock backend and Phosphor for local debugging.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 512
+    send_batch_max_size: 1024
+
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+
+exporters:
+  # Export to the mock backend (simulating production)
+  otlp/backend:
+    endpoint: mock-backend:4317
+    tls:
+      insecure: true
+
+  # Export to Phosphor for local debugging (the "mirror" pattern)
+  otlp/phosphor:
+    endpoint: host.docker.internal:4317
+    tls:
+      insecure: true
+
+  # Debug logging
+  debug:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+service:
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: detailed
+
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/backend, otlp/phosphor, debug]
+
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/backend, otlp/phosphor, debug]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/backend, otlp/phosphor, debug]

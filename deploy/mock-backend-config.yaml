@@ -1,0 +1,46 @@
+# Mock Backend Configuration
+# A minimal collector configuration that receives telemetry and discards it.
+# Used to simulate a production backend in the mirror pattern demo.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 1s
+
+exporters:
+  # Discard all telemetry (simulating a backend)
+  nop: {}
+  
+  # Or use debug for visibility
+  debug:
+    verbosity: basic
+    sampling_initial: 2
+    sampling_thereafter: 500
+
+service:
+  telemetry:
+    logs:
+      level: warn
+    metrics:
+      level: none
+
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [nop]
+
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [nop]
+
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [nop]
