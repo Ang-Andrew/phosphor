@@ -80,35 +80,23 @@ export function DataTable<T>({
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Table Header - Fixed */}
-      <div className="flex-shrink-0 bg-surface-900/80 border-b border-surface-700/50">
-        <table className="data-table">
-          <colgroup>
-            {columns.map((col) => (
-              <col
-                key={col.key}
-                style={{
-                  width: col.width,
-                  minWidth: col.minWidth,
-                }}
-              />
-            ))}
-          </colgroup>
-          <thead>
-            <tr>
-              {columns.map((col) => (
-                <th
-                  key={col.key}
-                  className={col.headerClassName}
-                  style={{ position: 'relative' }}
-                >
-                  {col.header}
-                </th>
-              ))}
-            </tr>
-          </thead>
-        </table>
+    <div className="flex flex-col h-full bg-surface-950 text-surface-200">
+      {/* Table Header */}
+      <div className="flex-shrink-0 flex items-center bg-surface-900/80 border-b border-surface-700/50">
+        {columns.map((col) => (
+          <div
+            key={col.key}
+            className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-surface-400 ${col.headerClassName || ''}`}
+            style={{
+              width: col.width,
+              minWidth: col.minWidth,
+              flexShrink: 0,
+              flexGrow: 0,
+            }}
+          >
+            {col.header}
+          </div>
+        ))}
       </div>
 
       {/* Table Body - Virtualized */}
@@ -123,51 +111,49 @@ export function DataTable<T>({
             position: 'relative',
           }}
         >
-          <table className="data-table">
-            <colgroup>
-              {columns.map((col) => (
-                <col
-                  key={col.key}
-                  style={{
-                    width: col.width,
-                    minWidth: col.minWidth,
-                  }}
-                />
-              ))}
-            </colgroup>
-            <tbody>
-              {virtualizer.getVirtualItems().map((virtualRow) => {
-                const item = data[virtualRow.index];
-                const id = rowKey(item);
-                const isSelected = selectedId === id;
-                const customClass = rowClassName ? rowClassName(item) : '';
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const item = data[virtualRow.index];
+            const id = rowKey(item);
+            const isSelected = selectedId === id;
+            const customClass = rowClassName ? rowClassName(item) : '';
 
-                return (
-                  <tr
-                    key={id}
-                    data-index={virtualRow.index}
+            return (
+              <div
+                key={id}
+                role="row"
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+                className={`flex items-center border-b border-surface-800/50 transition-colors duration-100 
+                  ${isSelected ? 'bg-phosphor-900/30' : 'hover:bg-surface-800/40'} 
+                  ${customClass} 
+                  ${onRowClick ? 'cursor-pointer' : ''}
+                `}
+                onClick={() => handleRowClick(item)}
+              >
+                {columns.map((col) => (
+                  <div
+                    key={col.key}
+                    role="cell"
+                    className={`px-3 py-1 truncate ${col.cellClassName || ''}`}
                     style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      height: `${virtualRow.size}px`,
-                      transform: `translateY(${virtualRow.start}px)`,
+                      width: col.width,
+                      minWidth: col.minWidth,
+                      flexShrink: 0,
+                      flexGrow: 0,
                     }}
-                    className={`${isSelected ? 'selected' : ''} ${customClass} ${onRowClick ? 'cursor-pointer' : ''
-                      }`}
-                    onClick={() => handleRowClick(item)}
                   >
-                    {columns.map((col) => (
-                      <td key={col.key} className={col.cellClassName}>
-                        {col.render(item, virtualRow.index)}
-                      </td>
-                    ))}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    {col.render(item, virtualRow.index)}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
         </div>
       </div>
 

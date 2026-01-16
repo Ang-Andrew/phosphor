@@ -1,27 +1,23 @@
 /**
- * useTelemetry hook - Manages telemetry data state and real-time streaming.
- * This is the primary hook for consuming telemetry data in the application.
+ * useTelemetry Hook
+ * Manages the application state for traces, metrics, logs, and statistics.
+ * Handles real-time updates from Wails backend and maintains ring buffers.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type {
   Span,
   Metric,
   LogRecord,
   TelemetryStats,
+  TelemetryBatch,
   TelemetryEvent,
+  SeverityLevel,
 } from '../types/telemetry';
 import { getApp, getRuntime, isWailsContext } from '../types/wails';
 
 // ============================================================================
-// Configuration
-// ============================================================================
-
-const MAX_BUFFER_SIZE = 1000;
-const REFRESH_INTERVAL_MS = 5000;
-
-// ============================================================================
-// Hook State Types
+// Types
 // ============================================================================
 
 export interface TelemetryState {
@@ -36,246 +32,322 @@ export interface TelemetryState {
 }
 
 export interface TelemetryActions {
-  startStreaming: () => Promise<void>;
-  stopStreaming: () => Promise<void>;
-  toggleStreaming: () => Promise<void>;
-  refresh: () => Promise<void>;
-  clearAll: () => Promise<void>;
-  getTraceById: (id: string) => Span | undefined;
-  getLogById: (id: string) => LogRecord | undefined;
-  getMetricById: (id: string) => Metric | undefined;
+  startStreaming: () => void;
+  stopStreaming: () => void;
+  toggleStreaming: () => void;
+  refresh: () => void;
+  clearAll: () => void;
 }
 
 // ============================================================================
-// Main Hook
+// Constants
+// ============================================================================
+
+const MAX_BUFFER_SIZE = 1000;
+
+const INITIAL_STATS: TelemetryStats = {
+  traceCount: 0,
+  metricCount: 0,
+  logCount: 0,
+  traceCapacity: MAX_BUFFER_SIZE,
+  metricCapacity: MAX_BUFFER_SIZE,
+  logCapacity: MAX_BUFFER_SIZE,
+  traceUsage: 0,
+  metricUsage: 0,
+  logUsage: 0,
+};
+
+const INITIAL_STATE: TelemetryState = {
+  traces: [],
+  metrics: [],
+  logs: [],
+  stats: INITIAL_STATS,
+  isStreaming: false,
+  isLoading: true,
+  error: null,
+  lastUpdate: null,
+};
+
+// ============================================================================
+// Hook Implementation
 // ============================================================================
 
 export function useTelemetry(): [TelemetryState, TelemetryActions] {
-  const [state, setState] = useState<TelemetryState>({
-    traces: [],
-    metrics: [],
-    logs: [],
-    stats: {
-      traceCount: 0,
-      metricCount: 0,
-      logCount: 0,
-      traceCapacity: 1000,
-      metricCapacity: 1000,
-      logCapacity: 1000,
-      traceUsage: 0,
-      metricUsage: 0,
-      logUsage: 0,
-    },
-    isStreaming: false,
-    isLoading: true,
-    error: null,
-    lastUpdate: null,
-  });
+  const [state, setState] = useState<TelemetryState>(INITIAL_STATE);
 
+  // Use generic refs to avoid strict map typing issues during rapid updates
   const tracesRef = useRef<Map<string, Span>>(new Map());
   const metricsRef = useRef<Map<string, Metric>>(new Map());
   const logsRef = useRef<Map<string, LogRecord>>(new Map());
 
-  // ============================================================================
-  // Data Fetching
-  // ============================================================================
+  // Data processing helper
+  const processBatch = useCallback((batch: TelemetryBatch) => {
+    const now = new Date();
 
-  const fetchInitialData = useCallback(async () => {
-    if (!isWailsContext()) {
-      // Mock data for development outside Wails
-      setState(prev => ({
-        ...prev,
-        isLoading: false,
-        lastUpdate: new Date(),
-      }));
-      return;
+    // Process Traces
+    if (batch.spans && batch.spans.length > 0) {
+      batch.spans.forEach(span => {
+        tracesRef.current.set(span.id, span);
+        // Maintain buffer size
+        if (tracesRef.current.size > MAX_BUFFER_SIZE) {
+          const firstKey = tracesRef.current.keys().next().value;
+          if (firstKey) tracesRef.current.delete(firstKey);
+        }
+      });
     }
 
-    try {
-      const app = getApp();
-      const [batch, stats, streaming] = await Promise.all([
-        app.GetAllTelemetry(),
-        app.GetStats(),
-        app.IsStreaming(),
-      ]);
-
-      // Populate refs
-      tracesRef.current.clear();
-      metricsRef.current.clear();
-      logsRef.current.clear();
-
-      batch.spans?.forEach(span => tracesRef.current.set(span.id, span));
-      batch.metrics?.forEach(metric => metricsRef.current.set(metric.id, metric));
-      batch.logs?.forEach(log => logsRef.current.set(log.id, log));
-
-      setState(prev => ({
-        ...prev,
-        traces: batch.spans || [],
-        metrics: batch.metrics || [],
-        logs: batch.logs || [],
-        stats,
-        isStreaming: streaming,
-        isLoading: false,
-        error: null,
-        lastUpdate: new Date(),
-      }));
-    } catch (err) {
-      setState(prev => ({
-        ...prev,
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Failed to load telemetry data',
-      }));
+    // Process Metrics
+    if (batch.metrics && batch.metrics.length > 0) {
+      batch.metrics.forEach(metric => {
+        metricsRef.current.set(metric.id, metric);
+        if (metricsRef.current.size > MAX_BUFFER_SIZE) {
+          const firstKey = metricsRef.current.keys().next().value;
+          if (firstKey) metricsRef.current.delete(firstKey);
+        }
+      });
     }
+
+    // Process Logs
+    if (batch.logs && batch.logs.length > 0) {
+      batch.logs.forEach(log => {
+        logsRef.current.set(log.id, log);
+        if (logsRef.current.size > MAX_BUFFER_SIZE) {
+          const firstKey = logsRef.current.keys().next().value;
+          if (firstKey) logsRef.current.delete(firstKey);
+        }
+      });
+    }
+
+    // Update state efficiently
+    const traceArr = Array.from(tracesRef.current.values());
+    const metricArr = Array.from(metricsRef.current.values());
+    const logArr = Array.from(logsRef.current.values());
+
+    setState(prev => ({
+      ...prev,
+      traces: traceArr,
+      metrics: metricArr,
+      logs: logArr,
+      stats: {
+        traceCount: tracesRef.current.size,
+        metricCount: metricsRef.current.size,
+        logCount: logsRef.current.size,
+        traceCapacity: MAX_BUFFER_SIZE,
+        metricCapacity: MAX_BUFFER_SIZE,
+        logCapacity: MAX_BUFFER_SIZE,
+        traceUsage: tracesRef.current.size / MAX_BUFFER_SIZE,
+        metricUsage: metricsRef.current.size / MAX_BUFFER_SIZE,
+        logUsage: logsRef.current.size / MAX_BUFFER_SIZE,
+      },
+      lastUpdate: now,
+    }));
   }, []);
 
-  const refresh = useCallback(async () => {
-    setState(prev => ({ ...prev, isLoading: true }));
-    await fetchInitialData();
-  }, [fetchInitialData]);
+  // Synthetic Data Generator for Browser Dev
+  useEffect(() => {
+    if (isWailsContext()) return;
 
-  // ============================================================================
-  // Streaming Control
-  // ============================================================================
+    console.log("Running in browser mode - generating synthetic data");
+    setState(prev => ({ ...prev, isLoading: false, isStreaming: true }));
 
-  const startStreaming = useCallback(async () => {
+    const generateID = () => Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+
+    const generateSyntheticData = () => {
+      const now = new Date();
+      const timeStr = now.toISOString();
+      const timeNano = now.getTime() * 1000000;
+
+      const services = ['order-service', 'payment-service', 'user-service', 'inventory-service'];
+      const methods = ['GET', 'POST', 'PUT', 'DELETE'];
+      const paths = ['/api/v1/orders', '/api/v1/users', '/api/v1/inventory', '/health'];
+
+      const newSpans: Span[] = [];
+      const newLogs: LogRecord[] = [];
+      const newMetrics: Metric[] = [];
+
+      // Generate Spans
+      if (Math.random() > 0.3) {
+        const service = services[Math.floor(Math.random() * services.length)];
+        const method = methods[Math.floor(Math.random() * methods.length)];
+        const path = paths[Math.floor(Math.random() * paths.length)];
+        const isError = Math.random() > 0.9;
+
+        newSpans.push({
+          id: generateID(),
+          traceId: generateID() + generateID(),
+          spanId: generateID().substring(0, 16),
+          name: `${method} ${path}`,
+          kind: Math.random() > 0.5 ? 'server' : 'client',
+          statusCode: isError ? 'error' : 'ok',
+          startTimeUnixNano: timeNano,
+          endTimeUnixNano: timeNano + (Math.random() * 500 * 1000000),
+          startTime: timeStr,
+          endTime: new Date(now.getTime() + Math.random() * 500).toISOString(),
+          durationMs: Math.random() * 500,
+          resource: { serviceName: service, attributes: [] },
+          instrumentationScope: { name: 'synthetic-gen', version: '1.0' },
+          receivedAt: timeStr,
+          attributes: [{ key: 'http.status_code', value: isError ? 500 : 200, type: 'int' }]
+        });
+      }
+
+      // Generate Logs
+      if (Math.random() > 0.4) {
+        const service = services[Math.floor(Math.random() * services.length)];
+        const severities: SeverityLevel[] = ['info', 'info', 'warn', 'error'];
+        const severity = severities[Math.floor(Math.random() * severities.length)];
+
+        newLogs.push({
+          id: generateID(),
+          timeUnixNano: timeNano,
+          observedTimeUnixNano: timeNano,
+          timestamp: timeStr,
+          observedTime: timeStr,
+          body: `Processed request for ${service} - ${generateID()}`,
+          severityNumber: severity === 'error' ? 17 : severity === 'warn' ? 13 : 9,
+          severityText: severity.toUpperCase(),
+          severity: severity,
+          resource: { serviceName: service, attributes: [] },
+          instrumentationScope: { name: 'synthetic-gen', version: '1.0' },
+          receivedAt: timeStr
+        });
+      }
+
+      // Generate Metrics
+      if (Math.random() > 0.7) {
+        const service = services[Math.floor(Math.random() * services.length)];
+        newMetrics.push({
+          id: generateID(),
+          name: 'http.server.duration',
+          description: 'Duration of HTTP requests',
+          unit: 'ms',
+          type: 'histogram',
+          dataPoints: [{
+            timeUnixNano: timeNano,
+            timestamp: timeStr,
+            valueDouble: Math.random() * 200,
+            attributes: []
+          }],
+          resource: { serviceName: service, attributes: [] },
+          instrumentationScope: { name: 'synthetic-gen', version: '1.0' },
+          receivedAt: timeStr
+        });
+      }
+
+      processBatch({ spans: newSpans, logs: newLogs, metrics: newMetrics });
+    };
+
+    const interval = setInterval(generateSyntheticData, 800);
+    return () => clearInterval(interval);
+  }, [processBatch]);
+
+  // Initial load or refresh (Wails only)
+  useEffect(() => {
     if (!isWailsContext()) return;
 
+    // Use proper helper, not setState directly if possible, but here we need to set loading
+    setState(prev => ({ ...prev, isLoading: true }));
+
+    getApp().GetStats()
+      .then((stats) => {
+        setState(prev => ({ ...prev, stats, isLoading: false }));
+        return getApp().IsStreaming();
+      })
+      .then((isStreaming) => {
+        setState(prev => ({ ...prev, isStreaming }));
+        if (isStreaming) {
+          // If already streaming, fetch latest data
+          getApp().GetAllTelemetry()
+            .then((data) => processBatch(data))
+            .catch(console.error);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to fetch initial telemetry:", err);
+        setState(prev => ({
+          ...prev,
+          isLoading: false,
+          error: "Failed to connect to backend. Is Phosphor running?"
+        }));
+      });
+
+    // Listen for real-time events
+    const unsubscribe = getRuntime().EventsOn("telemetry", (data: unknown) => {
+      // Type assertion safe here as we control the backend emission
+      const event = data as TelemetryEvent;
+      const batch: TelemetryBatch = {};
+
+      if (event.type === 'trace' && event.span) {
+        batch.spans = [event.span];
+      } else if (event.type === 'metric' && event.metric) {
+        batch.metrics = [event.metric];
+      } else if (event.type === 'log' && event.log) {
+        batch.logs = [event.log];
+      }
+      processBatch(batch);
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [processBatch]);
+
+  const startStreaming = useCallback(async () => {
+    if (!isWailsContext()) {
+      setState(prev => ({ ...prev, isStreaming: true }));
+      return;
+    }
     try {
       await getApp().StartStreaming();
       setState(prev => ({ ...prev, isStreaming: true }));
     } catch (err) {
-      setState(prev => ({
-        ...prev,
-        error: err instanceof Error ? err.message : 'Failed to start streaming',
-      }));
+      console.error("Failed to start streaming:", err);
     }
   }, []);
 
   const stopStreaming = useCallback(async () => {
-    if (!isWailsContext()) return;
-
+    if (!isWailsContext()) {
+      setState(prev => ({ ...prev, isStreaming: false }));
+      return;
+    }
     try {
       await getApp().StopStreaming();
       setState(prev => ({ ...prev, isStreaming: false }));
     } catch (err) {
-      setState(prev => ({
-        ...prev,
-        error: err instanceof Error ? err.message : 'Failed to stop streaming',
-      }));
+      console.error("Failed to stop streaming:", err);
     }
   }, []);
 
-  const toggleStreaming = useCallback(async () => {
+  const toggleStreaming = useCallback(() => {
     if (state.isStreaming) {
-      await stopStreaming();
+      stopStreaming();
     } else {
-      await startStreaming();
+      startStreaming();
     }
   }, [state.isStreaming, startStreaming, stopStreaming]);
 
-  const clearAll = useCallback(async () => {
+  const refresh = useCallback(async () => {
     if (!isWailsContext()) return;
-
     try {
-      await getApp().ClearAll();
-      tracesRef.current.clear();
-      metricsRef.current.clear();
-      logsRef.current.clear();
-
-      setState(prev => ({
-        ...prev,
-        traces: [],
-        metrics: [],
-        logs: [],
-        stats: {
-          ...prev.stats,
-          traceCount: 0,
-          metricCount: 0,
-          logCount: 0,
-          traceUsage: 0,
-          metricUsage: 0,
-          logUsage: 0,
-        },
-        lastUpdate: new Date(),
-      }));
+      setState(prev => ({ ...prev, isLoading: true, error: null }));
+      const [stats, batch] = await Promise.all([
+        getApp().GetStats(),
+        getApp().GetAllTelemetry(),
+      ]);
+      processBatch(batch);
+      setState(prev => ({ ...prev, stats, isLoading: false }));
     } catch (err) {
+      console.error("Failed to refresh:", err);
       setState(prev => ({
         ...prev,
-        error: err instanceof Error ? err.message : 'Failed to clear data',
+        isLoading: false,
+        error: "Failed to refresh data"
       }));
     }
-  }, []);
+  }, [processBatch]);
 
-  // ============================================================================
-  // Event Handlers
-  // ============================================================================
-
-  const handleTelemetryEvent = useCallback((event: TelemetryEvent) => {
-    setState(prev => {
-      const newState = { ...prev, lastUpdate: new Date() };
-
-      switch (event.type) {
-        case 'trace':
-          if (event.span) {
-            tracesRef.current.set(event.span.id, event.span);
-
-            // Maintain buffer size limit
-            if (tracesRef.current.size > MAX_BUFFER_SIZE) {
-              const firstKey = tracesRef.current.keys().next().value;
-              if (firstKey) tracesRef.current.delete(firstKey);
-            }
-
-            newState.traces = Array.from(tracesRef.current.values());
-            newState.stats = {
-              ...prev.stats,
-              traceCount: tracesRef.current.size,
-              traceUsage: tracesRef.current.size / prev.stats.traceCapacity,
-            };
-          }
-          break;
-
-        case 'metric':
-          if (event.metric) {
-            metricsRef.current.set(event.metric.id, event.metric);
-
-            if (metricsRef.current.size > MAX_BUFFER_SIZE) {
-              const firstKey = metricsRef.current.keys().next().value;
-              if (firstKey) metricsRef.current.delete(firstKey);
-            }
-
-            newState.metrics = Array.from(metricsRef.current.values());
-            newState.stats = {
-              ...prev.stats,
-              metricCount: metricsRef.current.size,
-              metricUsage: metricsRef.current.size / prev.stats.metricCapacity,
-            };
-          }
-          break;
-
-        case 'log':
-          if (event.log) {
-            logsRef.current.set(event.log.id, event.log);
-
-            if (logsRef.current.size > MAX_BUFFER_SIZE) {
-              const firstKey = logsRef.current.keys().next().value;
-              if (firstKey) logsRef.current.delete(firstKey);
-            }
-
-            newState.logs = Array.from(logsRef.current.values());
-            newState.stats = {
-              ...prev.stats,
-              logCount: logsRef.current.size,
-              logUsage: logsRef.current.size / prev.stats.logCapacity,
-            };
-          }
-          break;
-      }
-
-      return newState;
-    });
-  }, []);
-
-  const handleClearEvent = useCallback(() => {
+  const clearAll = useCallback(async () => {
+    // Clear local state
     tracesRef.current.clear();
     metricsRef.current.clear();
     logsRef.current.clear();
@@ -285,198 +357,23 @@ export function useTelemetry(): [TelemetryState, TelemetryActions] {
       traces: [],
       metrics: [],
       logs: [],
-      stats: {
-        ...prev.stats,
-        traceCount: 0,
-        metricCount: 0,
-        logCount: 0,
-        traceUsage: 0,
-        metricUsage: 0,
-        logUsage: 0,
-      },
-      lastUpdate: new Date(),
+      stats: INITIAL_STATS,
     }));
-  }, []);
 
-  // ============================================================================
-  // Lookup Helpers
-  // ============================================================================
-
-  const getTraceById = useCallback((id: string): Span | undefined => {
-    return tracesRef.current.get(id);
-  }, []);
-
-  const getLogById = useCallback((id: string): LogRecord | undefined => {
-    return logsRef.current.get(id);
-  }, []);
-
-  const getMetricById = useCallback((id: string): Metric | undefined => {
-    return metricsRef.current.get(id);
-  }, []);
-
-  // ============================================================================
-  // Effects
-  // ============================================================================
-
-  // Initial data load
-  useEffect(() => {
-    fetchInitialData();
-  }, [fetchInitialData]);
-
-  // Event subscription
-  useEffect(() => {
-    if (!isWailsContext()) return;
-
-    const runtime = getRuntime();
-
-    const unsubEvent = runtime.EventsOn('telemetry:event', (data) => {
-      handleTelemetryEvent(data as TelemetryEvent);
-    });
-
-    const unsubClear = runtime.EventsOn('telemetry:cleared', () => {
-      handleClearEvent();
-    });
-
-    return () => {
-      unsubEvent();
-      unsubClear();
-    };
-  }, [handleTelemetryEvent, handleClearEvent]);
-
-  // Periodic stats refresh when not streaming
-  useEffect(() => {
-    if (state.isStreaming || !isWailsContext()) return;
-
-    const interval = setInterval(async () => {
+    if (isWailsContext()) {
       try {
-        const stats = await getApp().GetStats();
-        setState(prev => ({ ...prev, stats }));
-      } catch {
-        // Silently ignore periodic refresh errors
+        await getApp().ClearAll();
+      } catch (err) {
+        console.error("Failed to clear backend data:", err);
       }
-    }, REFRESH_INTERVAL_MS);
+    }
+  }, []);
 
-    return () => clearInterval(interval);
-  }, [state.isStreaming]);
-
-  // ============================================================================
-  // Return
-  // ============================================================================
-
-  const actions: TelemetryActions = {
+  return [state, {
     startStreaming,
     stopStreaming,
     toggleStreaming,
     refresh,
     clearAll,
-    getTraceById,
-    getLogById,
-    getMetricById,
-  };
-
-  return [state, actions];
-}
-
-// ============================================================================
-// Utility Hooks
-// ============================================================================
-
-/**
- * Hook for filtering traces based on search criteria
- */
-export function useFilteredTraces(
-  traces: Span[],
-  filters: {
-    searchQuery?: string;
-    serviceName?: string;
-    statusCode?: string;
-    spanKind?: string;
-  }
-): Span[] {
-  return traces.filter(span => {
-    if (filters.searchQuery) {
-      const query = filters.searchQuery.toLowerCase();
-      const matchesName = span.name.toLowerCase().includes(query);
-      const matchesService = span.resource.serviceName.toLowerCase().includes(query);
-      const matchesTraceId = span.traceId.toLowerCase().includes(query);
-      if (!matchesName && !matchesService && !matchesTraceId) return false;
-    }
-
-    if (filters.serviceName && span.resource.serviceName !== filters.serviceName) {
-      return false;
-    }
-
-    if (filters.statusCode && span.statusCode !== filters.statusCode) {
-      return false;
-    }
-
-    if (filters.spanKind && span.kind !== filters.spanKind) {
-      return false;
-    }
-
-    return true;
-  });
-}
-
-/**
- * Hook for filtering logs based on search criteria
- */
-export function useFilteredLogs(
-  logs: LogRecord[],
-  filters: {
-    searchQuery?: string;
-    serviceName?: string;
-    severity?: string;
-  }
-): LogRecord[] {
-  return logs.filter(log => {
-    if (filters.searchQuery) {
-      const query = filters.searchQuery.toLowerCase();
-      const body = typeof log.body === 'string' ? log.body : JSON.stringify(log.body);
-      const matchesBody = body.toLowerCase().includes(query);
-      const matchesService = log.resource.serviceName.toLowerCase().includes(query);
-      if (!matchesBody && !matchesService) return false;
-    }
-
-    if (filters.serviceName && log.resource.serviceName !== filters.serviceName) {
-      return false;
-    }
-
-    if (filters.severity && log.severity !== filters.severity) {
-      return false;
-    }
-
-    return true;
-  });
-}
-
-/**
- * Hook for filtering metrics based on search criteria
- */
-export function useFilteredMetrics(
-  metrics: Metric[],
-  filters: {
-    searchQuery?: string;
-    serviceName?: string;
-    metricType?: string;
-  }
-): Metric[] {
-  return metrics.filter(metric => {
-    if (filters.searchQuery) {
-      const query = filters.searchQuery.toLowerCase();
-      const matchesName = metric.name.toLowerCase().includes(query);
-      const matchesService = metric.resource.serviceName.toLowerCase().includes(query);
-      if (!matchesName && !matchesService) return false;
-    }
-
-    if (filters.serviceName && metric.resource.serviceName !== filters.serviceName) {
-      return false;
-    }
-
-    if (filters.metricType && metric.type !== filters.metricType) {
-      return false;
-    }
-
-    return true;
-  });
+  }];
 }

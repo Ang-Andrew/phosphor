@@ -14,6 +14,7 @@ import type { TabType } from './types';
 export const App: React.FC = () => {
   const [state, actions] = useTelemetry();
   const [activeTab, setActiveTab] = useState<TabType>('traces');
+
   const [searchQueries, setSearchQueries] = useState({
     traces: '',
     metrics: '',
