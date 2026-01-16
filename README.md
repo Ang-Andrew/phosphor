@@ -33,17 +33,17 @@ Phosphor bridges a high-performance Go backend with a React frontend using [Wail
 
 ```mermaid
 graph TD
-    Client[Your App / OTel Collector] -->|gRPC :4317| Receiver[OTLP Receiver (Go)]
+    Client["Your App / OTel Collector"] -->|"gRPC :4317"| Receiver["OTLP Receiver (Go)"]
     
     subgraph "Phosphor Backend (Go)"
-        Receiver -->|Parsed| RingBuffers[Ring Buffers<T>]
-        RingBuffers -->|Events| Bridge[Wails Bridge]
+        Receiver -->|Parsed| RingBuffers["Ring Buffers<T>"]
+        RingBuffers -->|Events| Bridge["Wails Bridge"]
     end
     
     subgraph "Phosphor Frontend (React)"
-        Bridge -->|IPC| ReactHooks[useTelemetry Hook]
-        ReactHooks --> State[Virtual Store]
-        State --> UI[DataTables / Visualizations]
+        Bridge -->|IPC| ReactHooks["useTelemetry Hook"]
+        ReactHooks --> State["Virtual Store"]
+        State --> UI["DataTables / Visualizations"]
     end
 ```
 
