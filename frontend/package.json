@@ -2,6 +2,7 @@
   "name": "phosphor-frontend",
   "private": true,
   "version": "0.1.0",
+  "description": "Professional-grade desktop observability tool for OpenTelemetry",
   "type": "module",
   "scripts": {
     "dev": "vite",
