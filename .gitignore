@@ -1,0 +1,74 @@
+# Phosphor .gitignore
+
+# -----------------
+# Wails Build
+# -----------------
+build/bin/
+build/windows/installer/
+build/windows/wails.exe.manifest
+wails.json.bak
+
+# -----------------
+# Frontend (Node/Vite)
+# -----------------
+frontend/node_modules/
+frontend/dist/
+frontend/.DS_Store
+frontend/coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# -----------------
+# Go
+# -----------------
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.out
+coverage.html
+
+# Vendor
+vendor/
+
+# -----------------
+# IDEs & Editors
+# -----------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.swn
+
+# -----------------
+# OS Files
+# -----------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# -----------------
+# Environment Variables
+# -----------------
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# -----------------
+# Docker
+# -----------------
+docker-compose.override.yml
+docker-compose.override.yaml
