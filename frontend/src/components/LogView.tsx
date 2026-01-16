@@ -4,7 +4,9 @@
 
 import React, { useMemo, useState } from 'react';
 import { DataTable, type Column } from './DataTable';
+import { DetailsDrawer } from './DetailsDrawer';
 import type { LogRecord, SeverityLevel } from '../types';
+import { parseQuery, matchItem } from '../utils/search';
 
 // ============================================================================
 // Helper Functions
@@ -76,6 +78,8 @@ export const LogView: React.FC<LogViewProps> = ({
 }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<SeverityLevel | 'all'>('all');
+  const [sortColumn, setSortColumn] = useState<string>('timestamp');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   // Filter logs based on search query and severity
   const filteredLogs = useMemo(() => {
@@ -86,25 +90,54 @@ export const LogView: React.FC<LogViewProps> = ({
     }
 
     if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(log => {
-        const body = formatBody(log.body).toLowerCase();
-        return (
-          body.includes(query) ||
-          log.resource.serviceName.toLowerCase().includes(query) ||
-          (log.traceId && log.traceId.toLowerCase().includes(query))
-        );
-      });
+      const criteria = parseQuery(searchQuery);
+      filtered = filtered.filter(log => matchItem(
+        log,
+        criteria,
+        {
+          service: (l) => l.resource.serviceName,
+          severity: (l) => l.severity,
+          level: (l) => l.severity, // alias
+          traceid: (l) => l.traceId,
+          body: (l) => formatBody(l.body),
+          message: (l) => formatBody(l.body), // alias
+        },
+        (l) => [formatBody(l.body), l.resource.serviceName, l.traceId || '']
+      ));
     }
 
     return filtered;
   }, [logs, searchQuery, severityFilter]);
 
-  // Reverse to show newest first
-  const sortedLogs = useMemo(() =>
-    [...filteredLogs].reverse(),
-    [filteredLogs]
-  );
+  // Sort logs
+  const sortedLogs = useMemo(() => {
+    const sorted = [...filteredLogs];
+
+    sorted.sort((a, b) => {
+      let res = 0;
+      switch (sortColumn) {
+        case 'timestamp':
+          res = a.timeUnixNano - b.timeUnixNano;
+          break;
+        case 'service':
+          res = a.resource.serviceName.localeCompare(b.resource.serviceName);
+          break;
+        case 'severity':
+          // Sort by severity logic: fatal > error > warn...
+          // Or explicitly by number if available
+          res = a.severityNumber - b.severityNumber;
+          break;
+        case 'body':
+          res = formatBody(a.body).localeCompare(formatBody(b.body));
+          break;
+        default:
+          res = 0;
+      }
+      return sortDirection === 'asc' ? res : -res;
+    });
+
+    return sorted;
+  }, [filteredLogs, sortColumn, sortDirection]);
 
   const columns: Column<LogRecord>[] = useMemo(() => [
     {
@@ -150,18 +183,10 @@ export const LogView: React.FC<LogViewProps> = ({
       },
     },
     {
-      key: 'traceId',
-      header: 'Trace ID',
-      width: '130px',
-      render: (log) => (
-        log.traceId ? (
-          <span className="mono text-surface-500 truncate-id block">
-            {log.traceId.substring(0, 16)}...
-          </span>
-        ) : (
-          <span className="text-surface-600">—</span>
-        )
-      ),
+      key: 'spacer',
+      header: '',
+      flexGrow: 1,
+      render: () => null,
     },
   ], []);
 
@@ -234,8 +259,25 @@ export const LogView: React.FC<LogViewProps> = ({
           onRowClick={(log) => setSelectedId(log.id)}
           rowClassName={getRowClassName}
           emptyMessage="No logs received yet"
+          sortColumn={sortColumn}
+          sortDirection={sortDirection}
+          defaultSortColumn="timestamp"
+          onSort={(col, dir) => {
+            if (col && dir) {
+              setSortColumn(col);
+              setSortDirection(dir);
+            } else {
+              setSortColumn('timestamp');
+              setSortDirection('desc');
+            }
+          }}
         />
       </div>
+      <DetailsDrawer
+        item={logs.find(l => l.id === selectedId) || null}
+        onClose={() => setSelectedId(null)}
+        type="log"
+      />
     </div>
   );
 };

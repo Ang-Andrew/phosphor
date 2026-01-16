@@ -4,6 +4,7 @@
 # Wails Build
 # -----------------
 build/bin/
+/phosphor
 build/windows/installer/
 build/windows/wails.exe.manifest
 wails.json.bak

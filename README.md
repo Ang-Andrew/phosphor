@@ -6,7 +6,7 @@
 
 **A desktop Wireshark for OpenTelemetry**
 
-*Professional-grade local observability tool for debugging traces, metrics, and logs*
+*Local observability tool for debugging traces, metrics, and logs*
 
 [![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat-square&logo=go)](https://go.dev)
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react)](https://reactjs.org)
@@ -24,12 +24,12 @@ Phosphor is a **local-first, desktop application** for viewing and debugging Ope
 
 **Core Philosophy:**
 - **Zero Dependencies:** No databases (uses in-memory ring buffers).
-- **Pro Performance:** Handles 1000s of spans/sec with virtualized rendering.
-- **Developer Aesthetic:** Clean, dense, dark-mode UI inspired by modern IDEs.
+- **Performance:** Handles 1000s of spans/sec with virtualized rendering.
+- **Design:** Clean, dense, dark-mode UI inspired by modern IDEs.
 
 ## Architecture
 
-Phosphor bridges a high-performance Go backend with a React frontend using [Wails](https://wails.io).
+Phosphor bridges a Go backend with a React frontend using [Wails](https://wails.io).
 
 ```mermaid
 graph TD
@@ -49,12 +49,12 @@ graph TD
 
 ## Features
 
-### 🚄 High-Performance Data Ingestion
+### 🚄 Data Ingestion
 - **Native gRPC Receiver:** Listens on port `4317` for OTLP Traces, Metrics, and Logs.
 - **Ring Buffer Storage:** Fixed-capacity memory implementation (default: 1000 items) ensures Phosphor never consumes excessive RAM. It automatically rotates old data.
 - **Concurrency Safe:** Built with fine-grained mutexes for concurrent reading/writing.
 
-### 💎 Professional UI
+### 💎 Interface
 - **Live Streaming:** Real-time updates as signals arrive.
 - **Virtualized Tables:** Renders thousands of rows smoothly using `@tanstack/react-virtual`.
 - **Signal Correlation:**

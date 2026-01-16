@@ -4,7 +4,9 @@
 
 import React, { useMemo, useState } from 'react';
 import { DataTable, type Column } from './DataTable';
+import { DetailsDrawer } from './DetailsDrawer';
 import type { Span, SpanKind, StatusCode } from '../types';
+import { parseQuery, matchItem } from '../utils/search';
 
 // ============================================================================
 // Helper Functions
@@ -79,25 +81,66 @@ export const TraceView: React.FC<TraceViewProps> = ({
   onSearchChange,
 }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [sortColumn, setSortColumn] = useState<string>('timestamp');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   // Filter traces based on search query
   const filteredTraces = useMemo(() => {
     if (!searchQuery.trim()) return traces;
 
-    const query = searchQuery.toLowerCase();
-    return traces.filter(span =>
-      span.name.toLowerCase().includes(query) ||
-      span.resource.serviceName.toLowerCase().includes(query) ||
-      span.traceId.toLowerCase().includes(query) ||
-      span.spanId.toLowerCase().includes(query)
-    );
+    const criteria = parseQuery(searchQuery);
+
+    return traces.filter(span => matchItem(
+      span,
+      criteria,
+      {
+        service: (s) => s.resource.serviceName,
+        name: (s) => s.name,
+        kind: (s) => s.kind,
+        status: (s) => s.statusCode,
+        traceid: (s) => s.traceId,
+        spanid: (s) => s.spanId,
+      },
+      (s) => [s.name, s.resource.serviceName, s.traceId, s.spanId]
+    ));
   }, [traces, searchQuery]);
 
-  // Reverse to show newest first
-  const sortedTraces = useMemo(() =>
-    [...filteredTraces].reverse(),
-    [filteredTraces]
-  );
+  // Sort traces
+  const sortedTraces = useMemo(() => {
+    const sorted = [...filteredTraces];
+
+    sorted.sort((a, b) => {
+      let res = 0;
+      switch (sortColumn) {
+        case 'timestamp':
+          res = a.startTimeUnixNano - b.startTimeUnixNano;
+          break;
+        case 'service':
+          res = a.resource.serviceName.localeCompare(b.resource.serviceName);
+          break;
+        case 'name':
+          res = a.name.localeCompare(b.name);
+          break;
+        case 'kind':
+          res = a.kind.localeCompare(b.kind);
+          break;
+        case 'status':
+          res = a.statusCode.localeCompare(b.statusCode);
+          break;
+        case 'duration':
+          res = a.durationMs - b.durationMs;
+          break;
+        case 'traceId':
+          res = a.traceId.localeCompare(b.traceId);
+          break;
+        default:
+          res = 0;
+      }
+      return sortDirection === 'asc' ? res : -res;
+    });
+
+    return sorted;
+  }, [filteredTraces, sortColumn, sortDirection]);
 
   const columns: Column<Span>[] = useMemo(() => [
     {
@@ -125,7 +168,7 @@ export const TraceView: React.FC<TraceViewProps> = ({
       header: 'Service',
       width: '140px',
       render: (span) => (
-        <span className="font-medium text-phosphor-400 truncate block max-w-[120px]">
+        <span className="font-medium text-phosphor-400 truncate block">
           {span.resource.serviceName}
         </span>
       ),
@@ -133,11 +176,13 @@ export const TraceView: React.FC<TraceViewProps> = ({
     {
       key: 'name',
       header: 'Name',
-      minWidth: '200px',
+      minWidth: '400px',
       render: (span) => (
-        <span className={`font-medium ${span.statusCode === 'error' ? 'text-red-400' : 'text-surface-200'}`}>
-          {span.name}
-        </span>
+        <div className="flex flex-col justify-center">
+          <span className={`font-medium truncate ${span.statusCode === 'error' ? 'text-red-400' : 'text-surface-200'}`}>
+            {span.name}
+          </span>
+        </div>
       ),
     },
     {
@@ -168,6 +213,12 @@ export const TraceView: React.FC<TraceViewProps> = ({
           {span.traceId.substring(0, 16)}...
         </span>
       ),
+    },
+    {
+      key: 'spacer',
+      header: '',
+      flexGrow: 1,
+      render: () => null,
     },
   ], []);
 
@@ -219,8 +270,27 @@ export const TraceView: React.FC<TraceViewProps> = ({
           onRowClick={(span) => setSelectedId(span.id)}
           rowClassName={getRowClassName}
           emptyMessage="No traces received yet"
+          sortColumn={sortColumn}
+          sortDirection={sortDirection}
+          defaultSortColumn="timestamp"
+          onSort={(col, dir) => {
+            if (col && dir) {
+              setSortColumn(col);
+              setSortDirection(dir);
+            } else {
+              setSortColumn('timestamp');
+              setSortDirection('desc');
+            }
+          }}
         />
       </div>
+
+      {/* Details Drawer */}
+      <DetailsDrawer
+        item={traces.find(t => t.id === selectedId) || null}
+        onClose={() => setSelectedId(null)}
+        type="trace"
+      />
     </div>
   );
 };

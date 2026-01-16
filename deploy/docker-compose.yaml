@@ -55,7 +55,7 @@ services:
       - --rate=30
       - --duration=60s
       - --service=demo-logs-service
-      - --body="Application log message with sample data"
+      - '--body="Application log message with sample data"'
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on: []
@@ -128,7 +128,7 @@ services:
       - --rate=20
       - --duration=120s
       - --service=production-api
-      - --body="Production log: Processing request"
+      - '--body="Production log: Processing request"'
     depends_on:
       - otel-collector
 

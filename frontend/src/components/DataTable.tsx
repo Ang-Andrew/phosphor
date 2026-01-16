@@ -2,18 +2,15 @@
  * DataTable Component - Virtualized table for high-volume telemetry data
  */
 
-import React, { useRef, useCallback } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-
-// ============================================================================
-// Types
-// ============================================================================
 
 export interface Column<T> {
   key: string;
   header: string;
   width?: string;
   minWidth?: string;
+  flexGrow?: number;
   render: (item: T, index: number) => React.ReactNode;
   headerClassName?: string;
   cellClassName?: string;
@@ -28,6 +25,11 @@ interface DataTableProps<T> {
   rowClassName?: (item: T) => string;
   emptyMessage?: string;
   estimatedRowHeight?: number;
+  // Sorting props
+  sortColumn?: string;
+  sortDirection?: 'asc' | 'desc';
+  defaultSortColumn?: string;
+  onSort?: (column: string | null, direction: 'asc' | 'desc' | null) => void;
 }
 
 // ============================================================================
@@ -47,6 +49,17 @@ const EmptyState: React.FC<{ message: string }> = ({ message }) => (
 );
 
 // ============================================================================
+// Helper Functions
+// ============================================================================
+
+const parseWidth = (width: string | number | undefined, defaultWidth = 100): number => {
+  if (typeof width === 'number') return width;
+  if (!width) return defaultWidth;
+  if (width.endsWith('px')) return parseInt(width, 10);
+  return defaultWidth;
+};
+
+// ============================================================================
 // DataTable Component
 // ============================================================================
 
@@ -59,8 +72,25 @@ export function DataTable<T>({
   rowClassName,
   emptyMessage = 'No data available',
   estimatedRowHeight = 36,
+  sortColumn,
+  sortDirection,
+  defaultSortColumn,
+  onSort,
 }: DataTableProps<T>): React.ReactElement {
   const parentRef = useRef<HTMLDivElement>(null);
+
+  // Initialize column widths from props
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
+    const widths: Record<string, number> = {};
+    columns.forEach(col => {
+      if (col.key !== 'spacer') {
+        widths[col.key] = parseWidth(col.width || col.minWidth);
+      }
+    });
+    return widths;
+  });
+
+  const resizingRef = useRef<{ startX: number; startWidth: number; key: string } | null>(null);
 
   const virtualizer = useVirtualizer({
     count: data.length,
@@ -75,28 +105,123 @@ export function DataTable<T>({
     }
   }, [onRowClick]);
 
+  const handleHeaderClick = (key: string) => {
+    if (!onSort || key === 'spacer') return;
+
+    if (sortColumn === key) {
+      if (sortDirection === 'asc') {
+        // If it was ASC, always go to DESC
+        onSort(key, 'desc');
+      } else {
+        // If it was DESC, logic depends on if this is the default column
+        if (key === defaultSortColumn) {
+          // For default column, DESC -> ASC (toggle behavior, never "off")
+          onSort(key, 'asc');
+        } else {
+          // For other columns, DESC -> Default/Off
+          onSort(null, null);
+        }
+      }
+    } else {
+      // New sort column, default to asc
+      onSort(key, 'asc');
+    }
+  };
+
+  // Resize Handlers
+  const startResize = (e: React.MouseEvent, key: string) => {
+    e.preventDefault();
+    e.stopPropagation(); // Prevent triggering sort
+    const startWidth = columnWidths[key] || parseWidth(columns.find(c => c.key === key)?.width);
+    resizingRef.current = { startX: e.clientX, startWidth, key };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!resizingRef.current) return;
+    const { startX, startWidth, key } = resizingRef.current;
+    const diff = e.clientX - startX;
+    const newWidth = Math.max(50, startWidth + diff); // Min width 50px
+
+    setColumnWidths((prev: Record<string, number>) => ({
+      ...prev,
+      [key]: newWidth,
+    }));
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    resizingRef.current = null;
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }, [handleMouseMove]);
+
   if (data.length === 0) {
     return <EmptyState message={emptyMessage} />;
   }
+
+  // Helper to get effective style for a column
+  const getColStyle = (col: Column<T>) => {
+    // If it's the spacer, use flexGrow
+    if (col.key === 'spacer') {
+      return { flexGrow: 1, flexShrink: 1, width: 'auto' };
+    }
+
+    // Otherwise use strict pixels based on state or initial prop
+    const width = columnWidths[col.key] ?? parseWidth(col.width || col.minWidth);
+
+    return {
+      width: `${width}px`,
+      minWidth: `${width}px`, // Force it to respect the width
+      flexShrink: 0,
+      flexGrow: 0,
+    };
+  };
 
   return (
     <div className="flex flex-col h-full bg-surface-950 text-surface-200">
       {/* Table Header */}
       <div className="flex-shrink-0 flex items-center bg-surface-900/80 border-b border-surface-700/50">
-        {columns.map((col) => (
-          <div
-            key={col.key}
-            className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-surface-400 ${col.headerClassName || ''}`}
-            style={{
-              width: col.width,
-              minWidth: col.minWidth,
-              flexShrink: 0,
-              flexGrow: 0,
-            }}
-          >
-            {col.header}
-          </div>
-        ))}
+        {columns.map((col) => {
+          const isSorted = sortColumn === col.key;
+
+          return (
+            <div
+              key={col.key}
+              className={`
+                relative px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-surface-400 
+                ${col.headerClassName || ''} 
+                ${col.key !== 'spacer' ? 'cursor-pointer hover:bg-surface-800/50 hover:text-surface-200' : ''}
+                group flex items-center gap-1 select-none
+              `}
+              style={getColStyle(col)}
+              onClick={() => handleHeaderClick(col.key)}
+            >
+              <span className="truncate">{col.header}</span>
+
+              {/* Sort Indicator */}
+              {isSorted && (
+                <span className="text-phosphor-400 flex-shrink-0">
+                  {sortDirection === 'asc' ? '↑' : '↓'}
+                </span>
+              )}
+
+              {/* Resizer Handle (except for spacer) */}
+              {col.key !== 'spacer' && (
+                <div
+                  className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-phosphor-500/50 group-hover:bg-surface-700 transition-colors z-10"
+                  onMouseDown={(e) => startResize(e, col.key)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Table Body - Virtualized */}
@@ -125,7 +250,7 @@ export function DataTable<T>({
                   position: 'absolute',
                   top: 0,
                   left: 0,
-                  width: '100%',
+                  width: '100%', // Allow row to fill container width
                   height: `${virtualRow.size}px`,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
@@ -141,12 +266,7 @@ export function DataTable<T>({
                     key={col.key}
                     role="cell"
                     className={`px-3 py-1 truncate ${col.cellClassName || ''}`}
-                    style={{
-                      width: col.width,
-                      minWidth: col.minWidth,
-                      flexShrink: 0,
-                      flexGrow: 0,
-                    }}
+                    style={getColStyle(col)}
                   >
                     {col.render(item, virtualRow.index)}
                   </div>
@@ -154,14 +274,6 @@ export function DataTable<T>({
               </div>
             );
           })}
-        </div>
-      </div>
-
-      {/* Table Footer - Stats */}
-      <div className="flex-shrink-0 px-3 py-2 bg-surface-900/60 border-t border-surface-800/50">
-        <div className="flex items-center justify-between text-xs text-surface-500">
-          <span>{data.length.toLocaleString()} items</span>
-          <span>Scroll to load more</span>
         </div>
       </div>
     </div>

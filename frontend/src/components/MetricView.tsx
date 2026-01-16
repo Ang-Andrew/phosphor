@@ -4,7 +4,9 @@
 
 import React, { useMemo, useState } from 'react';
 import { DataTable, type Column } from './DataTable';
+import { DetailsDrawer } from './DetailsDrawer';
 import type { Metric, MetricType } from '../types';
+import { parseQuery, matchItem } from '../utils/search';
 
 // ============================================================================
 // Helper Functions
@@ -49,6 +51,15 @@ function formatMetricValue(metric: Metric): string {
   return '—';
 }
 
+function getMetricSortValue(metric: Metric): number {
+  if (metric.dataPoints.length === 0) return 0;
+  const point = metric.dataPoints[metric.dataPoints.length - 1];
+  if (point.valueInt64 !== undefined && point.valueInt64 !== null) return point.valueInt64;
+  if (point.valueDouble !== undefined && point.valueDouble !== null) return point.valueDouble;
+  if (point.count !== undefined) return point.count;
+  return 0;
+}
+
 // ============================================================================
 // Props
 // ============================================================================
@@ -83,6 +94,8 @@ export const MetricView: React.FC<MetricViewProps> = ({
 }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<MetricType | 'all'>('all');
+  const [sortColumn, setSortColumn] = useState<string>('timestamp');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   // Filter metrics based on search query and type
   const filteredMetrics = useMemo(() => {
@@ -93,22 +106,60 @@ export const MetricView: React.FC<MetricViewProps> = ({
     }
 
     if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(metric =>
-        metric.name.toLowerCase().includes(query) ||
-        metric.resource.serviceName.toLowerCase().includes(query) ||
-        (metric.description && metric.description.toLowerCase().includes(query))
-      );
+      const criteria = parseQuery(searchQuery);
+      filtered = filtered.filter(metric => matchItem(
+        metric,
+        criteria,
+        {
+          service: (m) => m.resource.serviceName,
+          name: (m) => m.name,
+          type: (m) => m.type,
+          unit: (m) => m.unit,
+          description: (m) => m.description,
+        },
+        (m) => [m.name, m.resource.serviceName, m.description || '']
+      ));
     }
 
     return filtered;
   }, [metrics, searchQuery, typeFilter]);
 
-  // Reverse to show newest first
-  const sortedMetrics = useMemo(() =>
-    [...filteredMetrics].reverse(),
-    [filteredMetrics]
-  );
+  // Sort metrics
+  const sortedMetrics = useMemo(() => {
+    const sorted = [...filteredMetrics];
+
+    sorted.sort((a, b) => {
+      let res = 0;
+      switch (sortColumn) {
+        case 'timestamp':
+          res = new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime();
+          break;
+        case 'service':
+          res = a.resource.serviceName.localeCompare(b.resource.serviceName);
+          break;
+        case 'name':
+          res = a.name.localeCompare(b.name);
+          break;
+        case 'type':
+          res = a.type.localeCompare(b.type);
+          break;
+        case 'value':
+          res = getMetricSortValue(a) - getMetricSortValue(b);
+          break;
+        case 'unit':
+          res = (a.unit || '').localeCompare(b.unit || '');
+          break;
+        case 'points':
+          res = a.dataPoints.length - b.dataPoints.length;
+          break;
+        default:
+          res = 0;
+      }
+      return sortDirection === 'asc' ? res : -res;
+    });
+
+    return sorted;
+  }, [filteredMetrics, sortColumn, sortDirection]);
 
   const columns: Column<Metric>[] = useMemo(() => [
     {
@@ -132,7 +183,7 @@ export const MetricView: React.FC<MetricViewProps> = ({
       header: 'Service',
       width: '140px',
       render: (metric) => (
-        <span className="font-medium text-phosphor-400 truncate block max-w-[120px]">
+        <span className="font-medium text-phosphor-400 truncate block">
           {metric.resource.serviceName}
         </span>
       ),
@@ -140,14 +191,14 @@ export const MetricView: React.FC<MetricViewProps> = ({
     {
       key: 'name',
       header: 'Name',
-      minWidth: '200px',
+      minWidth: '350px',
       render: (metric) => (
-        <div>
+        <div className="flex flex-col justify-center">
           <span className="font-medium text-surface-200">
             {metric.name}
           </span>
           {metric.description && (
-            <span className="text-xs text-surface-500 ml-2">
+            <span className="text-xs text-surface-500 truncate">
               {metric.description}
             </span>
           )}
@@ -159,7 +210,7 @@ export const MetricView: React.FC<MetricViewProps> = ({
       header: 'Latest Value',
       width: '120px',
       render: (metric) => (
-        <span className="mono tabular-nums text-green-400">
+        <span className="mono tabular-nums text-green-400 block truncate">
           {formatMetricValue(metric)}
         </span>
       ),
@@ -167,7 +218,7 @@ export const MetricView: React.FC<MetricViewProps> = ({
     {
       key: 'unit',
       header: 'Unit',
-      width: '80px',
+      width: '60px',
       render: (metric) => (
         <span className="text-surface-500">
           {metric.unit || '—'}
@@ -177,12 +228,18 @@ export const MetricView: React.FC<MetricViewProps> = ({
     {
       key: 'points',
       header: 'Points',
-      width: '70px',
+      width: '60px',
       render: (metric) => (
         <span className="mono text-surface-500">
           {metric.dataPoints.length}
         </span>
       ),
+    },
+    {
+      key: 'spacer',
+      header: '',
+      flexGrow: 1,
+      render: () => null,
     },
   ], []);
 
@@ -247,8 +304,25 @@ export const MetricView: React.FC<MetricViewProps> = ({
           selectedId={selectedId}
           onRowClick={(metric) => setSelectedId(metric.id)}
           emptyMessage="No metrics received yet"
+          sortColumn={sortColumn}
+          sortDirection={sortDirection}
+          defaultSortColumn="timestamp"
+          onSort={(col, dir) => {
+            if (col && dir) {
+              setSortColumn(col);
+              setSortDirection(dir);
+            } else {
+              setSortColumn('timestamp');
+              setSortDirection('desc');
+            }
+          }}
         />
       </div>
+      <DetailsDrawer
+        item={metrics.find(m => m.id === selectedId) || null}
+        onClose={() => setSelectedId(null)}
+        type="metric"
+      />
     </div>
   );
 };
